@@ -229,7 +229,7 @@ class Encoder_no_skip(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self):
-        super(Decoder_dct, self).__init__()
+        super(Decoder, self).__init__()
         self.sb_encoder = Encoder_no_skip()
         
         self.encoder = Encoder()
@@ -260,6 +260,46 @@ class Decoder(nn.Module):
         x = torch.cat((x, x2), dim = 1)
         x = self.tran_conv5(x)
         x = self.dconv4(x)
+        x = self.conv(x)
+        
+        
+        x = nn.AvgPool2d(3, stride=1, padding=1)(x)
+        x = nn.Sigmoid()(x)
+        x = torch.squeeze(x , 1)
+        return x
+    
+class Decoder3(nn.Module):
+    def __init__(self):
+        super(Decoder3, self).__init__()
+        self.dct_encoder = Encoder_no_skip()
+        self.sb_encoder = Encoder_no_skip()
+        
+        self.encoder = Encoder()
+        
+        self.tran_conv1 = nn.ConvTranspose2d(96 , 64, kernel_size=2, stride=2,padding=0)
+        self.tran_conv2 = nn.ConvTranspose2d(64 , 32, kernel_size=2, stride=2)
+        self.tran_conv3 = nn.ConvTranspose2d(32 , 16, kernel_size=2, stride=2)
+        self.tran_conv4 = nn.ConvTranspose2d(16 , 2, kernel_size=2, stride=2)
+        self.tran_conv5 = nn.ConvTranspose2d(4 , 2, kernel_size=2, stride=2)
+        self.dconv1 = DoubleConv(2,2)
+        
+        self.conv = nn.Conv2d(2,1,kernel_size=1)
+        
+    def forward(self, x, xl, xs):
+        
+        xd = self.dct_encoder(xl)
+        xs = self.sb_encoder(xs)
+
+        x1, x2 = self.encoder(x)
+        
+        x = torch.cat((x1, xd, xs), dim = 1)
+        x = self.tran_conv1(x)
+        x = self.tran_conv2(x)
+        x = self.tran_conv3(x)
+        x = self.tran_conv4(x)
+        x = torch.cat((x, x2), dim = 1)
+        x = self.tran_conv5(x)
+        x = self.dconv1(x)
         x = self.conv(x)
         
         
