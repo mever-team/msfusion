@@ -1,14 +1,15 @@
 import pandas as pd
 import os
 import numpy as np
+import PIL
 from PIL import Image
 import torch
+from torch import nn
 import cv2
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import math 
 import torch.nn.functional as F
-from torch import nn
 from torch.utils.data import Dataset, DataLoader, Subset
 from sklearn.model_selection import train_test_split
 from skimage import io, transform
@@ -19,11 +20,8 @@ from scipy import signal
 from torchvision import transforms, utils, datasets
 import pyfftw
 import tqdm
-from sklearn.metrics import precision_score, recall_score, f1_score, roc_curve, auc
-import PIL
 
 
-MAP_NAMES = ['DCTOutput.png', 'SBOutput.png']
 
 def train_augmentations(original_shape:tuple, target_shape=256):
     return A.Compose([
@@ -31,43 +29,34 @@ def train_augmentations(original_shape:tuple, target_shape=256):
         A.SmallestMaxSize(max_size=target_shape),
         A.RandomCrop(target_shape, target_shape, always_apply=False, p=1),
         A.HorizontalFlip(p=0.5)
-    ], additional_targets={i.split('.')[0]:'image' for i in MAP_NAMES})
+    ], additional_targets={'dct':'image', 'sb':'image'})
 
 def val_augmentations(original_shape:tuple, target_shape=256):
     return A.Compose([
         A.Resize(original_shape[0],original_shape[1],p=1),
         A.SmallestMaxSize(max_size=target_shape),
         A.CenterCrop(target_shape, target_shape, always_apply=False, p=1),
-    ], additional_targets={i.split('.')[0]:'image' for i in MAP_NAMES})
+    ], additional_targets={'dct':'image', 'sb':'image'})
 
 def eval_augmentations(original_shape:tuple, target_shape=256):
     return A.Compose([
         A.Resize(original_shape[0],original_shape[1],p=1),
-        A.SmallestMaxSize(max_size=target_shape),
-        
-    ], additional_targets={i.split('.')[0]:'image' for i in MAP_NAMES})
-
-def evaluation_augmentations(original_shape:tuple, target_shape=256):
-    return A.Compose([
-        A.Resize(target_shape,target_shape,p=1),     
-    ], additional_targets={i.split('.')[0]:'image' for i in MAP_NAMES})
+    ], additional_targets={'dct':'image', 'sb':'image'})
 
 def pytorch_tranformations():
     return A.Compose([
             A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0), 
             ToTensorV2()
-        ],additional_targets={i.split('.')[0]:'image' for i in MAP_NAMES})
-
+        ], additional_targets={'dct':'image', 'sb':'image'})
 
 import traceback
-class Fusion_Dataset(Dataset):  
-
-    def __init__(self,dataset_root:str, dataframe_path:str, transform=None, split=['train'],origin=None, image_size=256, 
-                 to_tensor=True, shuffle=False, verbose=False, dct_flag=False, sb_flag=False):
+class Data_Generator(Dataset):  
+    
+    def __init__(self,dataset_root:str, dataframe_path:str, transform=None, split=['train'], image_size=256, 
+                 to_tensor=True, shuffle=False, verbose=False, dct=False, sb=False, inverse=False):
         self.dataset_root = dataset_root
         self.dataframe_path = dataframe_path
         self.split = split
-        self.origin = origin
         self.image_size = image_size
         self.transform = transform
         self.shuffle = shuffle
@@ -75,57 +64,74 @@ class Fusion_Dataset(Dataset):
         self.to_tensor = to_tensor
         self.verbose = verbose
         self.tensor_transform = pytorch_tranformations()
-        self.evaluation=False
-        self.dct_flag = dct_flag
-        self.sb_flag = sb_flag
+        self.radon = radon
+        self.evaluation = evaluation
+        self.flag_dct = dct
+        self.flag_sb = sb
         
-           
     def config_dataset(self):
         self.dataframe = pd.read_csv(self.dataframe_path)
-        self.dataframe = self.dataframe.loc[self.dataframe.origin.isin(self.origin)]
         self.dataframe = self.dataframe.loc[self.dataframe.split.isin(self.split)]
-    
-        self.dataframe['path'] = self.dataset_root+self.dataframe.origin+'/'+self.dataframe.hash
-        self.paths = self.dataframe['path'].tolist()
-        self.image_ext = self.dataframe['ext'].tolist()
-        self.mask_ext = self.dataframe['mask_ext'].tolist()
-        self.origins = self.dataframe['origin'].tolist()
+        if 'val' in self.split:
+            self.dataframe = self.dataframe[:100]
+        self.dataframe['image_path'] = self.dataset_root+self.dataframe.image
+        self.images = self.dataframe['image_path'].tolist()
+        
+        self.dataframe['mask_path'] = self.dataset_root + self.dataframe['mask']
+        self.masks = self.dataframe['mask_path'].tolist()
+        
+        if self.flag_dct:
+            self.dataframe['dct_path'] = self.dataset_root+self.dataframe['dct']
+            self.dcts = self.dataframe['dct_path'].tolist()
+        
+        if self.flag_sb:
+            self.dataframe['sb_path'] = self.dataset_root+self.dataframe['sb']
+            self.sbs = self.dataframe['sb_path'].tolist()
+        
         if self.shuffle:
-            from sklearn.utils import shuffle
-            self.paths, self.image_ext, self.mask_ext, self.origins  = shuffle(np.array(self.paths), np.array(self.mask_ext),
-                                                                               np.array(self.mask_ext),np.array(self.origins))
-
+            from skearn.utils import shuffle
+            self.paths = shuffle(np.array(self.paths))
+            
     def __len__(self):
-        return len(self.paths)
+        return len(self.images)
     
     def binarize_mask(self, mask, upper=True):
         mask = cv2.normalize(mask, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
         mask = np.ceil(mask).astype(np.int32)
         return mask
     
-    def inverse_mask(self,mask):
+    def inverse_mask(self, mask):
         max_value = mask.max()
         new_mask = np.zeros_like(mask)
         indices = np.where(mask==0)
         new_mask[indices] = max_value
         return new_mask
     
-   
     def read_images(self, idx:int) -> dict:
-        path = self.paths[idx]
-        origin = self.origins[idx]
-        image = np.array(Image.open(path+'/Display.'+self.image_ext[idx]).convert('RGB'))
-        mask = np.array(Image.open(path+'/gt.'+self.mask_ext[idx]).convert('L')).astype(np.float32)
-        maps = [np.array(Image.open(path+'/'+i).convert('RGB')) if not i=='CAGIInversedOutput.png' else np.array(Image.open(path+'/'+i).convert('RGB'))[:,:,::-1] for i in MAP_NAMES]
-        data = {}
+        image_path = self.images[idx]
+        mask_path = self.masks[idx]
+        if self.flag_dct:
+            dct_path = self.dcts[idx]
+        if self.flag_sb:
+            sb_path = self.sbs[idx]
+        image = np.array(Image.open(image_path).convert('RGB'))
+        mask = np.array(Image.open(mask_path).convert('L')).astype(np.float32)
+        if self.flag_dct:
+            dct = np.array(Image.open(dct_path).convert('RGB'))
+        if self.flag_sb:
+            sb = np.array(Image.open(sb_path).convert('RGB'))
+        data={}
         data['image'] = image
-        original_h,original_w = image.shape[:2]
+        original_h, original_w = image.shape[:2]
         data['mask'] = mask
-        data.update({map_name.split('.')[0]:maps[i] for i,map_name in enumerate(MAP_NAMES)})
-        if self.transform is not None:      
-            data = self.transform((original_h,original_w),self.image_size)(**data)
+        if self.flag_dct:
+            data['dct'] = dct
+        if self.flag_sb:
+            data['sb'] = sb
+        if self.transform is not None:
+            data = self.transform((original_h, original_w), self.image_size)(**data)
         data['mask'] = self.binarize_mask(data['mask'])
-        if origin == 'synthetic':
+        if inverse:
             data['mask'] = self.inverse_mask(data['mask'])
         return data
     
@@ -137,19 +143,25 @@ class Fusion_Dataset(Dataset):
                     data = self.tensor_transform(**data)
                     image = data.pop('image')
                     mask = data.pop('mask')
-                    if(self.dct_flag and self.sb_flag):
-                        dct = data.pop('DCTOutput')
-                        sb = data.pop('SBOutput')
-                        return image, mask, dct, sb
-                    if self.dct_flag:
-                        dct = data.pop('DCTOutput')
+                    
+                    if(self.flag_dct and self.flag_sb):
+                        dct = data.pop('dct')
+                        sb = data.pop('sb')
+                        return image, mask, dct, sb                      
+                    if self.flag_dct:
+                        dct = data.pop('dct')
                         return image, mask, dct
-                    if self.sb_flag:
-                        sb = data.pop('SBOutput')
+                    if self.flag_sb:
+                        sb = data.pop('sb')
                         return image, mask, sb
                 else:
                     return data
             except Exception as e:
                 if self.verbose:
                     traceback.print_exc()
-                idx=np.random.randint(0,len(self))
+                idx = np.random.randint(0, len(self))
+
+
+
+
+
