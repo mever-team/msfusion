@@ -6,9 +6,7 @@ from PIL import Image
 from model import Encoder, Decoder, Decoder3
 from train import train
 from torch import nn
-from dataset.synthetic_generator import Synthetic_Dataset, train_augmentations, val_augmentations
-from dataset.fusion_generator import Fusion_Dataset, train_augmentations, val_augmentations
-from dataset.ifs_tc_generator import IFS_TC, train_augmentations, val_augmentations
+from dataset.data_generator import Data_Generator, train_augmentations, val_augmentations
 from torch.utils.tensorboard import SummaryWriter
 import click
 import os
@@ -27,12 +25,11 @@ def cli():
 @click.option('--learning_rate', type=float, default=1e-3, show_default=True)
 @click.option('--epochs', type=int, default=20, show_default=True)
 @click.option('--checkpoint_path', type=str, default='checkpoints/', show_default=True)
+@click.option('--checkpoint_name', type=str)
 @click.option('--dataset_name', required=True, show_default=True)
-@click.option('--dataset_path', required=True, show_default=True)
-@click.option('--dataset_csv', required=True, show_default=True)
 
 
-def training(experiment_name, model_name, batch_size, gpu_id, learning_rate, epochs, checkpoint_path, dataset_name, dataset_path, dataset_csv):
+def training(experiment_name, model_name, resume, batch_size, gpu_id, learning_rate, epochs, checkpoint_path, checkpoint_name, dataset_name):
     
     kwargs = locals()
     print(kwargs)
@@ -62,18 +59,18 @@ def training(experiment_name, model_name, batch_size, gpu_id, learning_rate, epo
         model = Decoder3()
     
     if resume:    
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        checkpoint = torch.load(checkpoint_name, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
     
     if dataset_name == 'synthetic':
-        train_data = Data_Generator(dataset_path, dataset_csv, transform=train_augmentations, dct=flag_dct, sb=flag_sb, inverse=True)
-        val_data = Data_Generator(dataset_path, dataset_csv, transform=val_augmentations, split=['val'], dct=flag_dct, sb=flag_sb, inverse=True)
+        train_data = Data_Generator('/home/siopi/drive2/Synthetic manipulation dataset/', '/home/siopi/drive2/Synthetic manipulation dataset/synthetic_sb.csv', transform=train_augmentations, dct=flag_dct, sb=flag_sb, inverse=True)
+        val_data = Data_Generator('/home/siopi/drive2/Synthetic manipulation dataset/', '/home/siopi/drive2/Synthetic manipulation dataset/synthetic_sb.csv', transform=val_augmentations, split=['val'], dct=flag_dct, sb=flag_sb, inverse=True)
     if dataset_name == 'casia2':
-        train_data = Data_Generator(dataset_path, dataset_csv, transform=train_augmentations, dct=flag_dct, sb=flag_sb)
-        val_data = Data_Generator(dataset_path, dataset_csv, transform=val_augmentations, split=['val'], dct=flag_dct, sb=flag_sb)
+        train_data = Data_Generator('/home/siopi/drive2/CASIA2/', '/home/siopi/drive2/CASIA 2/CASIA 2.0/casia2.csv', transform=train_augmentations, dct=flag_dct, sb=flag_sb)
+        val_data = Data_Generator('/home/siopi/drive2/CASIA2/', '/home/siopi/drive2/CASIA 2/CASIA 2.0/casia2.csv', transform=val_augmentations, split=['val'], dct=flag_dct, sb=flag_sb)
     if dataset_name == 'ifs_tc':
-        train_data = Data_Generator(dataset_path, dataset_csv, transform=train_augmentations, dct=flag_dct, sb=flag_sb, inverse=True)
-        val_data = Data_Generator(dataset_path, dataset_csv, transform=val_augmentations, split=['val'], dct=flag_dct, sb=flag_sb, inverse=True)
+        train_data = Data_Generator('/home/siopi/drive2/IFS-TC/', '/home/siopi/drive2/IFS-TC/ifstc.csv', transform=train_augmentations, dct=flag_dct, sb=flag_sb, inverse=True)
+        val_data = Data_Generator('/home/siopi/drive2/IFS-TC/', '/home/siopi/drive2/IFS-TC/ifstc.csv', transform=val_augmentations, split=['val'], dct=flag_dct, sb=flag_sb, inverse=True)
 
     train_loader = DataLoader(dataset = train_data, shuffle = True, batch_size = batch_size, num_workers=8, pin_memory=True)
     val_loader = DataLoader(dataset = val_data, shuffle = False, batch_size = batch_size, num_workers=8, pin_memory=True)

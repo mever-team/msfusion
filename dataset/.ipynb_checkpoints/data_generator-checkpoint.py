@@ -52,8 +52,7 @@ def pytorch_tranformations():
 import traceback
 class Data_Generator(Dataset):  
     
-    def __init__(self,dataset_root:str, dataframe_path:str, transform=None, split=['train'], image_size=256, 
-                 to_tensor=True, shuffle=False, verbose=False, dct=False, sb=False, inverse=False):
+    def __init__(self,dataset_root:str, dataframe_path:str, transform=None, split=['train'], image_size=256, to_tensor=True, shuffle=False, verbose=False, dct=False, sb=False, inverse=False):
         self.dataset_root = dataset_root
         self.dataframe_path = dataframe_path
         self.split = split
@@ -62,12 +61,11 @@ class Data_Generator(Dataset):
         self.shuffle = shuffle
         self.config_dataset()
         self.to_tensor = to_tensor
-        self.verbose = verbose
-        self.tensor_transform = pytorch_tranformations()
-        self.radon = radon
-        self.evaluation = evaluation
+        self.verbose = verbose        
         self.flag_dct = dct
         self.flag_sb = sb
+        self.inverse = inverse
+        self.tensor_transform = pytorch_tranformations()
         
     def config_dataset(self):
         self.dataframe = pd.read_csv(self.dataframe_path)
@@ -80,13 +78,13 @@ class Data_Generator(Dataset):
         self.dataframe['mask_path'] = self.dataset_root + self.dataframe['mask']
         self.masks = self.dataframe['mask_path'].tolist()
         
-        if self.flag_dct:
-            self.dataframe['dct_path'] = self.dataset_root+self.dataframe['dct']
-            self.dcts = self.dataframe['dct_path'].tolist()
+        # if self.flag_dct:
+        self.dataframe['dct_path'] = self.dataset_root+self.dataframe['dct']
+        self.dcts = self.dataframe['dct_path'].tolist()
         
-        if self.flag_sb:
-            self.dataframe['sb_path'] = self.dataset_root+self.dataframe['sb']
-            self.sbs = self.dataframe['sb_path'].tolist()
+        # if self.flag_sb:
+        self.dataframe['sb_path'] = self.dataset_root+self.dataframe['sb']
+        self.sbs = self.dataframe['sb_path'].tolist()
         
         if self.shuffle:
             from skearn.utils import shuffle
@@ -131,7 +129,7 @@ class Data_Generator(Dataset):
         if self.transform is not None:
             data = self.transform((original_h, original_w), self.image_size)(**data)
         data['mask'] = self.binarize_mask(data['mask'])
-        if inverse:
+        if self.inverse:
             data['mask'] = self.inverse_mask(data['mask'])
         return data
     
