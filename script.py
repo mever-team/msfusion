@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from PIL import Image
 from model import Encoder, Decoder, Decoder3
-from train import train
+from training import train
 from torch import nn
 from dataset.data_generator import Data_Generator, train_augmentations, val_augmentations
 from torch.utils.tensorboard import SummaryWriter

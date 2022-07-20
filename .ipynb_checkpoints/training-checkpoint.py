@@ -1,14 +1,13 @@
 import torch
-import tqdm
 import numpy as np
+from typing import Iterable
+from glob import glob
+from torch import nn
+from tqdm import tqdm
+import os
+import gc
 from sklearn.metrics import precision_score, recall_score, f1_score, roc_curve, auc
 from utils import Metrics
-from training import evaluate
-import tqdm
-import os
-import sys
-
-
 
 def train(model, epochs, device, train_loader, val_loader, optimizer, criterion, checkpoint_path='checkpoints/', step=0, writer=None, monitor_value=None, early_stop_patience=5, dct=False, sb=False):
     model = model.to(device)
@@ -18,7 +17,7 @@ def train(model, epochs, device, train_loader, val_loader, optimizer, criterion,
     early_stop_patience_counter = early_stop_patience
     
     for epoch in range(epochs):
-        for i, data in enumerate(tqdm.tqdm(train_loader)):
+        for i, data in enumerate(tqdm(train_loader)):
             
             if(dct and sb):
                 image, mask, d, s= data
@@ -87,3 +86,53 @@ def train(model, epochs, device, train_loader, val_loader, optimizer, criterion,
                     writer.add_scalar('val/'+metric, np.mean(val_metric_results[metric]), epoch) 
                 else:
                     writer.add_scalar('val/'+metric, val_metric_results[metric], epoch)
+
+@torch.no_grad()
+def evaluate(model, criterion, iterator, device, metrics, dct=False, sb=False):
+    model.eval()
+    criterion.eval()
+    losses = []
+    pbar = tqdm(range(len(iterator)) ,unit='iterations',desc='Validation',postfix={metric:np.nan for metric in metrics.get_metric_names()})
+    for iteration in pbar:
+        batch = next(iterator)
+        
+        if(dct and sb):
+            samples, targets, d, s= batch
+            
+        if(dct and not sb):
+            samples, targets, d = batch
+
+        if(sb and not dct):
+            samples, targets, s = batch
+            
+        if isinstance(samples,list):
+            samples = [s.to(device) for s in samples]
+        else:
+            samples = samples.to(device)
+        targets = targets.to(device)
+        
+        if dct:
+            d = d.to(device)
+        if sb:
+            s = s.to(device)
+
+        if(dct and sb):
+            outputs = model(samples, d, s)
+        if(dct and not sb):
+            outputs = model(samples, d)
+        if(sb and not dct):
+            outputs =model(samples, s)
+        outputs = torch.squeeze(outputs , 1)
+        
+        loss = criterion(outputs, targets.float())
+        
+        losses.append(loss.detach().cpu().numpy())
+        targets = targets.long()
+        results = metrics.update(outputs.detach().cpu(), targets.detach().cpu())
+        results['loss'] = loss.item()
+        pbar.set_postfix(**results)
+    
+    results = metrics.compute()
+    results['loss'] = np.mean(losses)
+    pbar.set_postfix(**results)
+    return results
